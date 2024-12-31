@@ -7,14 +7,22 @@ pipeline {
     }
     
     environment {
-        SCANNER_HOME=tool 'sonar-scanner'
+        sshUser  = 'ubuntu'
+        serverIP = '3.110.164.90' //change your tomcat server ip
+        warFilePath = '/var/lib/jenkins/workspace/tomcat/target/petclinic.war'
     }
     
     stages{
         
-        stage("Git Checkout"){
-            steps{
-                git branch: 'main', changelog: false, poll: false, url: 'https://github.com/jaiswaladi246/Petclinic.git'
+        stage('clean ws') {
+            steps {
+               cleanWs()
+            }
+        }
+
+         stage('git checkout') {
+            steps {
+                checkout scmGit(branches: [[name: '*/main']], extensions: [], userRemoteConfigs: [[credentialsId: 'github-token', url: 'https://github.com/arun037/Petclinic.git']])
             }
         }
         
@@ -30,53 +38,21 @@ pipeline {
             }
         }
         
-        stage("Sonarqube Analysis "){
-            steps{
-                withSonarQubeEnv('sonar-server') {
-                    sh ''' $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=Petclinic \
-                    -Dsonar.java.binaries=. \
-                    -Dsonar.projectKey=Petclinic '''
-    
-                }
-            }
-        }
-        
-        stage("OWASP Dependency Check"){
-            steps{
-                dependencyCheck additionalArguments: '--scan ./ --format HTML ', odcInstallation: 'DP'
-                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
-            }
-        }
         
          stage("Build"){
             steps{
-                sh " mvn clean install"
+                sh " mvn package"
             }
-        }
         
-        stage("Docker Build & Push"){
-            steps{
-                script{
-                   withDockerRegistry(credentialsId: '58be877c-9294-410e-98ee-6a959d73b352', toolName: 'docker') {
-                        
-                        sh "docker build -t image1 ."
-                        sh "docker tag image1 adijaiswal/pet-clinic123:latest "
-                        sh "docker push adijaiswal/pet-clinic123:latest "
-                    }
+       stage('copy the war file') {
+            steps {
+                     withCredentials([sshUserPrivateKey(credentialsId: 'tomcatssh', keyFileVariable: 'SSH_KEY')]) {
+                        sh """
+                        scp -o StrictHostKeyChecking=no -i $SSH_KEY $warFilePath $sshUser@$serverIp:/opt/tomcat/webapps/
+                        ssh -o StrictHostKeyChecking=no -i $SSH_KEY $sshUser@$serverIp "sudo systemctl restart tomcat"
+
+                        """
                 }
             }
-        }
-        
-        stage("TRIVY"){
-            steps{
-                sh " trivy image adijaiswal/pet-clinic123:latest"
-            }
-        }
-        
-        stage("Deploy To Tomcat"){
-            steps{
-                sh "cp  /var/lib/jenkins/workspace/CI-CD/target/petclinic.war /opt/apache-tomcat-9.0.65/webapps/ "
-            }
-        }
     }
 }
